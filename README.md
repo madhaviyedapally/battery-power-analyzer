@@ -39,7 +39,9 @@ report_parser.exe
 
 ## Findings
 
-I ran the tool for ~43 minutes on battery power during a normal working session (browser tabs, VS Code, Claude desktop app). A few things stood out:
+I ran the tool for ~43 minutes on battery power during a normal working session (browser tabs, VS Code, this Claude desktop app open). A few things stood out:
+
+![Battery drain over ~43 minutes](battery_drain_chart.png)
 
 - **Battery dropped from 100% to 74% in ~43 minutes** — a sustained drain rate of roughly **36%/hour** on battery.
 - **Drain was very steady** (~1%/minute) apart from a single anomalous jump (100%→94% in one minute, right after unplugging) that doesn't correspond to any CPU spike in the process data — most likely a battery-percentage recalibration artifact rather than real usage, worth noting as a limitation of relying on the reported percentage alone.
