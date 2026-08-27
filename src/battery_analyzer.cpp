@@ -1,6 +1,9 @@
 #define UNICODE
 #define _UNICODE
 
+#include <ctime>
+#include <fstream>
+#include <sstream>
 #include <windows.h>
 #include <pdh.h>
 #include <pdhmsg.h>
@@ -39,9 +42,12 @@ void printBatteryStatus() {
 }
 
 // ---- Top CPU-consuming processes ----
-void printTopProcesses(int topN = 5) {
+ProcessCpu getTopProcess() {
     PDH_HQUERY query;
     PdhOpenQuery(NULL, 0, &query);
+    SYSTEM_INFO sysInfo;
+    GetSystemInfo(&sysInfo);
+    DWORD numCores = sysInfo.dwNumberOfProcessors;
 
     DWORD counterListSize = 0, instanceListSize = 0;
     PdhEnumObjectItems(
@@ -87,10 +93,10 @@ void printTopProcesses(int topN = 5) {
     for (auto& [name, counter] : counters) {
         PDH_FMT_COUNTERVALUE value;
         if (PdhGetFormattedCounterValue(counter, PDH_FMT_DOUBLE, NULL, &value) == ERROR_SUCCESS) {
-            double cpu = value.doubleValue;
-            if (cpu > 100.0) cpu = 100.0;
-            rawResults.push_back({ name, cpu });
-        }
+            double cpu = value.doubleValue / numCores;  // normalize to system-wide %
+            if (cpu > 100.0) cpu = 100.0; // safety clamp
+                rawResults.push_back({ name, cpu });
+}
     }
 
     std::vector<ProcessCpu> results;
@@ -118,21 +124,70 @@ void printTopProcesses(int topN = 5) {
         return a.cpuPercent > b.cpuPercent;
     });
 
-    std::wcout << L"\nTop " << topN << L" CPU-consuming processes:\n";
+    std::wcout << L"\nTop 5 CPU-consuming processes:\n";
     int count = 0;
     for (auto& r : results) {
         if (r.cpuPercent <= 0.0) continue;
         std::wcout << r.name << L": " << r.cpuPercent << L"%\n";
         count++;
-        if (count >= topN) break;
+        if (count >= 5) break;
     }
 
     PdhCloseQuery(query);
+
+    if (!results.empty())
+        return results[0];  // the top process (already sorted descending)
+    return { L"None", 0.0 };
+
+}
+
+// ---- Get current timestamp as a formatted string ----
+std::wstring getTimestamp() {
+    time_t now = time(nullptr);
+    tm localTime;
+    localtime_s(&localTime, &now);
+
+    wchar_t buffer[64];
+    wcsftime(buffer, sizeof(buffer) / sizeof(wchar_t), L"%Y-%m-%d %H:%M:%S", &localTime);
+    return std::wstring(buffer);
 }
 
 int main() {
-    std::wcout << L"=== Battery & Power Usage Analyzer ===\n\n";
-    printBatteryStatus();
-    printTopProcesses(5);
+    std::wcout << L"=== Battery & Power Usage Analyzer ===\n";
+    std::wcout << L"Logging every 1 minute. Press Ctrl+C to stop.\n\n";
+
+    std::wofstream csvFile("data/battery_log.csv", std::ios::app);
+    // Write header only if file is new/empty
+    csvFile.seekp(0, std::ios::end);
+    if (csvFile.tellp() == 0) {
+        csvFile << L"timestamp,battery_percent,is_charging,top_process,top_process_cpu\n";
+    }
+
+    while (true) {
+        std::wstring timestamp = getTimestamp();
+
+        SYSTEM_POWER_STATUS powerStatus;
+        GetSystemPowerStatus(&powerStatus);
+        int batteryPercent = (int)powerStatus.BatteryLifePercent;
+        bool isCharging = (powerStatus.BatteryFlag & 8) != 0;
+
+        std::wcout << L"[" << timestamp << L"] Battery: " << batteryPercent
+                    << L"% | Charging: " << (isCharging ? L"Yes" : L"No") << L"\n";
+
+        ProcessCpu topProcess = getTopProcess();
+
+        // Write one row to the CSV
+        csvFile << timestamp << L","
+                << batteryPercent << L","
+                << (isCharging ? L"Yes" : L"No") << L","
+                << topProcess.name << L","
+                << topProcess.cpuPercent << L"\n";
+        csvFile.flush();  // make sure it's actually written to disk immediately
+
+        std::wcout << L"----------------------------------------\n";
+
+        Sleep(60000);  // wait 1 minute before next cycle
+    }
+
     return 0;
 }
